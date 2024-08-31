@@ -23,6 +23,10 @@ func IsVulnerable(ctx context.Context, ip net.IP, cfg *config.Config) (bool, err
 	for retry := 0; retry < maxRetries; retry++ {
 		if cfg.UseTor {
 			conn, err = dialThroughTor(ctx, addr, cfg.Timeout)
+			if err != nil && cfg.FallbackToDirect {
+				log.Printf("Tor connection failed, falling back to direct connection for %s", addr)
+				conn, err = dialDirect(ctx, addr, cfg.Timeout)
+			}
 		} else {
 			conn, err = dialDirect(ctx, addr, cfg.Timeout)
 		}
