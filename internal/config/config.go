@@ -10,6 +10,7 @@ type Config struct {
 	Timeout     time.Duration
 	UserAgent   string
 	Debug       bool
+	UseTor      bool
 }
 
 func DefaultConfig() *Config {
@@ -19,5 +20,6 @@ func DefaultConfig() *Config {
 		Timeout:     5 * time.Second,
 		UserAgent:   "ORFinder/1.0 (Security Research; root@schniggie.de)",
 		Debug:       false,
+		UseTor:      false,
 	}
 }

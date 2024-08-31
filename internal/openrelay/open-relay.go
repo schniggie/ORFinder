@@ -3,17 +3,45 @@ package openrelay
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
 	"github.com/schniggie/orfinder/internal/config"
+	"golang.org/x/net/proxy"
 )
 
 // IsVulnerable checks if the given IP is vulnerable to open relay attack
 func IsVulnerable(ctx context.Context, ip net.IP, cfg *config.Config) (bool, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:25", ip), cfg.Timeout)
+	var conn net.Conn
+	var err error
+
+	addr := fmt.Sprintf("%s:25", ip)
+
+	if cfg.UseTor {
+		dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+		if err != nil {
+			log.Printf("Failed to create SOCKS5 dialer: %v. Falling back to direct connection.", err)
+			cfg.UseTor = false
+		} else {
+			contextDialer, ok := dialer.(proxy.ContextDialer)
+			if !ok {
+				return false, fmt.Errorf("failed to create context dialer")
+			}
+			conn, err = contextDialer.DialContext(ctx, "tcp", addr)
+		}
+	}
+
+	if !cfg.UseTor {
+		d := net.Dialer{Timeout: cfg.Timeout}
+		conn, err = d.DialContext(ctx, "tcp", addr)
+	}
+
 	if err != nil {
 		return false, fmt.Errorf("failed to connect: %w", err)
+	}
+	if conn == nil {
+		return false, fmt.Errorf("connection is nil")
 	}
 	defer conn.Close()
 

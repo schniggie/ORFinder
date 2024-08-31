@@ -24,6 +24,7 @@ func main() {
 	flag.IntVar(&cfg.Concurrency, "n", cfg.Concurrency, "Number of concurrent scans")
 	flag.DurationVar(&cfg.Timeout, "t", cfg.Timeout, "Timeout for each scan")
 	flag.BoolVar(&cfg.Debug, "debug", cfg.Debug, "Enable debug output")
+	flag.BoolVar(&cfg.UseTor, "tor", cfg.UseTor, "Use Tor for scanning (requires a running Tor proxy on 127.0.0.1:9050)")
 	flag.Parse()
 
 	// Set up logging

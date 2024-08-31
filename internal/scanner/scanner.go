@@ -11,6 +11,7 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/schniggie/orfinder/internal/config"
 	"github.com/schniggie/orfinder/internal/openrelay"
+	"golang.org/x/net/proxy"
 	"golang.org/x/sys/unix"
 )
 
@@ -72,10 +73,10 @@ func scanIP(ctx context.Context, ip net.IP, cfg *config.Config) error {
 	var isOpen bool
 	var err error
 
-	if useRawSockets {
+	if useRawSockets && !cfg.UseTor {
 		isOpen, err = portIsOpenRaw(ctx, ip, 25, cfg.Timeout)
 	} else {
-		isOpen, err = portIsOpenTCP(ctx, ip.String(), 25, cfg.Timeout)
+		isOpen, err = portIsOpenTCP(ctx, ip.String(), 25, cfg.Timeout, cfg.UseTor)
 	}
 
 	if err != nil {
@@ -94,10 +95,8 @@ func scanIP(ctx context.Context, ip net.IP, cfg *config.Config) error {
 
 		if isVulnerable {
 			fmt.Printf("[+] %s is vulnerable to open relay attack\n", ip)
-		} else {
-			if cfg.Debug {
-				fmt.Printf("[-] %s is not vulnerable to open relay attack\n", ip)
-			}
+		} else if cfg.Debug {
+			fmt.Printf("[-] %s is not vulnerable to open relay attack\n", ip)
 		}
 	}
 
@@ -176,14 +175,39 @@ func portIsOpenRaw(ctx context.Context, dstIP net.IP, dstPort int, timeout time.
 	}
 }
 
-func portIsOpenTCP(ctx context.Context, host string, port int, timeout time.Duration) (bool, error) {
+func portIsOpenTCP(ctx context.Context, host string, port int, timeout time.Duration, useTor bool) (bool, error) {
 	addr := fmt.Sprintf("%s:%d", host, port)
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
+
+	var conn net.Conn
+	var err error
+
+	if useTor {
+		dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+		if err != nil {
+			log.Printf("Failed to create SOCKS5 dialer: %v. Falling back to direct connection.", err)
+			useTor = false
+		} else {
+			contextDialer, ok := dialer.(proxy.ContextDialer)
+			if !ok {
+				return false, fmt.Errorf("failed to create context dialer")
+			}
+			conn, err = contextDialer.DialContext(ctx, "tcp", addr)
+		}
+	}
+
+	if !useTor {
+		var d net.Dialer
+		d.Timeout = timeout
+		conn, err = d.DialContext(ctx, "tcp", addr)
+	}
+
 	if err != nil {
 		return false, nil // Consider port closed if connection fails
 	}
-	conn.Close()
+	if conn != nil {
+		defer conn.Close()
+	}
+
 	return true, nil
 }
 
