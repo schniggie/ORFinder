@@ -11,6 +11,8 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+const maxRetries = 3
+
 // IsVulnerable checks if the given IP is vulnerable to open relay attack
 func IsVulnerable(ctx context.Context, ip net.IP, cfg *config.Config) (bool, error) {
 	var conn net.Conn
@@ -18,49 +20,85 @@ func IsVulnerable(ctx context.Context, ip net.IP, cfg *config.Config) (bool, err
 
 	addr := fmt.Sprintf("%s:25", ip)
 
-	if cfg.UseTor {
-		dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
-		if err != nil {
-			log.Printf("Failed to create SOCKS5 dialer: %v. Falling back to direct connection.", err)
-			cfg.UseTor = false
+	for retry := 0; retry < maxRetries; retry++ {
+		if cfg.UseTor {
+			conn, err = dialThroughTor(ctx, addr, cfg.Timeout)
 		} else {
-			contextDialer, ok := dialer.(proxy.ContextDialer)
-			if !ok {
-				return false, fmt.Errorf("failed to create context dialer")
-			}
-			conn, err = contextDialer.DialContext(ctx, "tcp", addr)
+			conn, err = dialDirect(ctx, addr, cfg.Timeout)
 		}
+
+		if err != nil {
+			log.Printf("Attempt %d: Failed to connect to %s: %v", retry+1, addr, err)
+			time.Sleep(time.Duration(retry+1) * time.Second) // Exponential backoff
+			continue
+		}
+
+		if conn == nil {
+			log.Printf("Attempt %d: Connection is nil for %s", retry+1, addr)
+			time.Sleep(time.Duration(retry+1) * time.Second)
+			continue
+		}
+
+		defer conn.Close()
+
+		isVulnerable, err := checkRelayVulnerability(conn, cfg.Timeout)
+		if err != nil {
+			log.Printf("Attempt %d: Error checking relay vulnerability for %s: %v", retry+1, addr, err)
+			continue
+		}
+
+		return isVulnerable, nil
 	}
 
-	if !cfg.UseTor {
-		d := net.Dialer{Timeout: cfg.Timeout}
-		conn, err = d.DialContext(ctx, "tcp", addr)
-	}
+	return false, fmt.Errorf("failed to check vulnerability after %d attempts", maxRetries)
+}
 
+func dialThroughTor(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
+	dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
 	if err != nil {
-		return false, fmt.Errorf("failed to connect: %w", err)
+		return nil, fmt.Errorf("failed to create SOCKS5 dialer: %w", err)
 	}
-	if conn == nil {
-		return false, fmt.Errorf("connection is nil")
-	}
-	defer conn.Close()
 
-	if err := sendCommand(conn, "HELO example.com\r\n", "250", cfg.Timeout); err != nil {
+	contextDialer, ok := dialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, fmt.Errorf("failed to create context dialer")
+	}
+
+	conn, err := contextDialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial through Tor: %w", err)
+	}
+
+	return conn, nil
+}
+
+func dialDirect(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
+	var d net.Dialer
+	d.Timeout = timeout
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial directly: %w", err)
+	}
+	return conn, nil
+}
+
+func checkRelayVulnerability(conn net.Conn, timeout time.Duration) (bool, error) {
+	if err := sendCommand(conn, "HELO example.com\r\n", "250", timeout); err != nil {
 		return false, err
 	}
-	if err := sendCommand(conn, "MAIL FROM:<test@example.com>\r\n", "250", cfg.Timeout); err != nil {
+	if err := sendCommand(conn, "MAIL FROM:<test@example.com>\r\n", "250", timeout); err != nil {
 		return false, err
 	}
-	if err := sendCommand(conn, "RCPT TO:<test@example.org>\r\n", "250", cfg.Timeout); err != nil {
+	if err := sendCommand(conn, "RCPT TO:<test@example.org>\r\n", "250", timeout); err != nil {
 		return false, nil // Not vulnerable if this fails
 	}
-	if err := sendCommand(conn, "DATA\r\n", "354", cfg.Timeout); err != nil {
+	if err := sendCommand(conn, "DATA\r\n", "354", timeout); err != nil {
 		return false, nil
 	}
-	if err := sendCommand(conn, "Subject: Test\r\n\r\nThis is a test.\r\n.\r\n", "250", cfg.Timeout); err != nil {
+	if err := sendCommand(conn, "Subject: Test\r\n\r\nThis is a test.\r\n.\r\n", "250", timeout); err != nil {
 		return false, nil
 	}
-	if err := sendCommand(conn, "QUIT\r\n", "221", cfg.Timeout); err != nil {
+	if err := sendCommand(conn, "QUIT\r\n", "221", timeout); err != nil {
 		return false, nil
 	}
 

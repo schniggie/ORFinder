@@ -21,11 +21,16 @@ func main() {
 
 	// Parse command-line flags
 	flag.StringVar(&cfg.CountryCode, "c", cfg.CountryCode, "Country code (e.g., us, ru, fr)")
-	flag.IntVar(&cfg.Concurrency, "n", cfg.Concurrency, "Number of concurrent scans")
+	flag.IntVar(&cfg.Concurrency, "n", cfg.Concurrency, "Number of concurrent scans (default: 100, tor: 10")
 	flag.DurationVar(&cfg.Timeout, "t", cfg.Timeout, "Timeout for each scan")
 	flag.BoolVar(&cfg.Debug, "debug", cfg.Debug, "Enable debug output")
 	flag.BoolVar(&cfg.UseTor, "tor", cfg.UseTor, "Use Tor for scanning (requires a running Tor proxy on 127.0.0.1:9050)")
 	flag.StringVar(&cfg.OutputFile, "o", cfg.OutputFile, "Output file for vulnerable servers")
+	flag.Parse()
+
+	if cfg.UseTor {
+		cfg.Concurrency = 10 // Reduce concurrency when using Tor
+	}
 	flag.Parse()
 
 	// Set up logging

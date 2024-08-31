@@ -47,19 +47,30 @@ func Scan(ctx context.Context, ipRange string, cfg *config.Config, vulnerableSer
 	}
 
 	if cfg.Debug {
-		log.Printf("Scanning IP range: %s", ipRange)
+		log.Printf("Starting scan of IP range: %s", ipRange)
 		log.Printf("Using raw sockets: %v", useRawSockets)
 	}
 
+	count := 0
 	for ip := ip.Mask(ipnet.Mask); ipnet.Contains(ip); inc(ip) {
+		count++
+		if cfg.Debug && count%10 == 0 {
+			log.Printf("Processed %d IPs in range %s", count, ipRange)
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 			if err := scanIP(ctx, ip, cfg, vulnerableServers); err != nil {
-				return fmt.Errorf("error scanning %s: %w", ip, err)
+				log.Printf("Error scanning %s: %v", ip, err)
+				continue // Continue with next IP instead of returning
 			}
 		}
+	}
+
+	if cfg.Debug {
+		log.Printf("Completed scan of IP range: %s. Total IPs processed: %d", ipRange, count)
 	}
 
 	return nil
@@ -90,12 +101,16 @@ func scanIP(ctx context.Context, ip net.IP, cfg *config.Config, vulnerableServer
 	if isOpen {
 		isVulnerable, err := openrelay.IsVulnerable(ctx, ip, cfg)
 		if err != nil {
-			return fmt.Errorf("error checking open relay: %w", err)
+			log.Printf("Error checking open relay for %s: %v", ip, err)
+			return nil // Continue with next IP instead of returning error
 		}
 
 		if isVulnerable {
 			result := fmt.Sprintf("[+] %s is vulnerable to open relay attack", ip)
 			vulnerableServers <- result
+			if cfg.Debug {
+				log.Println(result)
+			}
 		} else if cfg.Debug {
 			log.Printf("[-] %s is not vulnerable to open relay attack", ip)
 		}
