@@ -11,6 +11,7 @@ type Config struct {
 	UserAgent   string
 	Debug       bool
 	UseTor      bool
+	OutputFile  string
 }
 
 func DefaultConfig() *Config {
@@ -21,5 +22,6 @@ func DefaultConfig() *Config {
 		UserAgent:   "ORFinder/1.0 (Security Research; root@schniggie.de)",
 		Debug:       false,
 		UseTor:      false,
+		OutputFile:  "",
 	}
 }

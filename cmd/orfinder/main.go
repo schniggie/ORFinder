@@ -25,6 +25,7 @@ func main() {
 	flag.DurationVar(&cfg.Timeout, "t", cfg.Timeout, "Timeout for each scan")
 	flag.BoolVar(&cfg.Debug, "debug", cfg.Debug, "Enable debug output")
 	flag.BoolVar(&cfg.UseTor, "tor", cfg.UseTor, "Use Tor for scanning (requires a running Tor proxy on 127.0.0.1:9050)")
+	flag.StringVar(&cfg.OutputFile, "o", cfg.OutputFile, "Output file for vulnerable servers")
 	flag.Parse()
 
 	// Set up logging
@@ -33,13 +34,6 @@ func main() {
 
 	// Print welcome message
 	welcome()
-
-	// Print scanner mode
-	if scanner.UseRawSockets() {
-		fmt.Println("Scanner mode: Raw Sockets (faster, requires root/CAP_NET_RAW)")
-	} else {
-		fmt.Println("Scanner mode: TCP Connect (slower, no special privileges required)")
-	}
 
 	// Create a context that we can cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -54,6 +48,17 @@ func main() {
 		cancel()
 	}()
 
+	// Create output file if specified
+	var outputFile *os.File
+	var err error
+	if cfg.OutputFile != "" {
+		outputFile, err = os.Create(cfg.OutputFile)
+		if err != nil {
+			log.Fatalf("Failed to create output file: %v", err)
+		}
+		defer outputFile.Close()
+	}
+
 	// Load IP ranges
 	log.Printf("Loading IP ranges for country code: %s", cfg.CountryCode)
 	ipRanges, err := loader.Load(ctx, cfg.CountryCode)
@@ -65,6 +70,22 @@ func main() {
 	// Create a wait group and semaphore for managing concurrency
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, cfg.Concurrency)
+
+	// Create a channel to collect vulnerable servers
+	vulnerableServers := make(chan string, cfg.Concurrency)
+
+	// Start a goroutine to write vulnerable servers to the output file
+	go func() {
+		for server := range vulnerableServers {
+			if outputFile != nil {
+				_, err := fmt.Fprintln(outputFile, server)
+				if err != nil {
+					log.Printf("Error writing to output file: %v", err)
+				}
+			}
+			fmt.Println(server)
+		}
+	}()
 
 	// Start scanning
 	log.Printf("Starting scan with concurrency: %d", cfg.Concurrency)
@@ -81,7 +102,7 @@ func main() {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				if err := scanner.Scan(ctx, ipRange, cfg); err != nil {
+				if err := scanner.Scan(ctx, ipRange, cfg, vulnerableServers); err != nil {
 					log.Printf("Error scanning %s: %v", ipRange, err)
 				}
 			}(ipRange)
@@ -90,6 +111,7 @@ func main() {
 
 	// Wait for all scans to complete
 	wg.Wait()
+	close(vulnerableServers)
 
 	// Print summary
 	duration := time.Since(startTime)

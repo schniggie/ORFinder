@@ -40,7 +40,7 @@ func checkRawSocketCapability() bool {
 }
 
 // Scan performs a scan on the given IP range
-func Scan(ctx context.Context, ipRange string, cfg *config.Config) error {
+func Scan(ctx context.Context, ipRange string, cfg *config.Config, vulnerableServers chan<- string) error {
 	ip, ipnet, err := net.ParseCIDR(ipRange)
 	if err != nil {
 		return fmt.Errorf("failed to parse CIDR: %w", err)
@@ -56,7 +56,7 @@ func Scan(ctx context.Context, ipRange string, cfg *config.Config) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			if err := scanIP(ctx, ip, cfg); err != nil {
+			if err := scanIP(ctx, ip, cfg, vulnerableServers); err != nil {
 				return fmt.Errorf("error scanning %s: %w", ip, err)
 			}
 		}
@@ -65,7 +65,7 @@ func Scan(ctx context.Context, ipRange string, cfg *config.Config) error {
 	return nil
 }
 
-func scanIP(ctx context.Context, ip net.IP, cfg *config.Config) error {
+func scanIP(ctx context.Context, ip net.IP, cfg *config.Config, vulnerableServers chan<- string) error {
 	if cfg.Debug {
 		log.Printf("Scanning IP: %s", ip)
 	}
@@ -94,9 +94,10 @@ func scanIP(ctx context.Context, ip net.IP, cfg *config.Config) error {
 		}
 
 		if isVulnerable {
-			fmt.Printf("[+] %s is vulnerable to open relay attack\n", ip)
+			result := fmt.Sprintf("[+] %s is vulnerable to open relay attack", ip)
+			vulnerableServers <- result
 		} else if cfg.Debug {
-			fmt.Printf("[-] %s is not vulnerable to open relay attack\n", ip)
+			log.Printf("[-] %s is not vulnerable to open relay attack", ip)
 		}
 	}
 
