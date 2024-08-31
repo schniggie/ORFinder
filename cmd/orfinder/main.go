@@ -20,7 +20,7 @@ func main() {
 	cfg := config.DefaultConfig()
 
 	// Parse command-line flags
-	flag.StringVar(&cfg.CountryCode, "c", cfg.CountryCode, "Country code (e.g., US, DE, FR)")
+	flag.StringVar(&cfg.CountryCode, "c", cfg.CountryCode, "Country code (e.g., us, ru, fr)")
 	flag.IntVar(&cfg.Concurrency, "n", cfg.Concurrency, "Number of concurrent scans")
 	flag.DurationVar(&cfg.Timeout, "t", cfg.Timeout, "Timeout for each scan")
 	flag.BoolVar(&cfg.Debug, "debug", cfg.Debug, "Enable debug output")
@@ -32,6 +32,13 @@ func main() {
 
 	// Print welcome message
 	welcome()
+
+	// Print scanner mode
+	if scanner.UseRawSockets() {
+		fmt.Println("Scanner mode: Raw Sockets (faster, requires root/CAP_NET_RAW)")
+	} else {
+		fmt.Println("Scanner mode: TCP Connect (slower, no special privileges required)")
+	}
 
 	// Create a context that we can cancel
 	ctx, cancel := context.WithCancel(context.Background())

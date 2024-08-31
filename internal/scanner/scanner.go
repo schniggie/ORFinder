@@ -20,6 +20,11 @@ func init() {
 	useRawSockets = checkRawSocketCapability()
 }
 
+// UseRawSockets returns whether the scanner is using raw sockets
+func UseRawSockets() bool {
+	return useRawSockets
+}
+
 func checkRawSocketCapability() bool {
 	if unix.Geteuid() == 0 {
 		return true // Root user can always use raw sockets
