@@ -1,6 +1,7 @@
 package openrelay
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -24,64 +25,75 @@ var insecureTLSConfig = &tls.Config{
 	InsecureSkipVerify: true,
 }
 
-func IsVulnerable(ctx context.Context, ip net.IP, cfg *config.Config) (bool, error) {
-	for _, port := range cfg.Ports {
-		isOpen, err := checkPort(ctx, ip, port, cfg)
-		if err != nil {
-			log.Printf("Error checking port %d on %s: %v", port, ip, err)
-			continue
-		}
-		if !isOpen {
-			continue
-		}
-
-		if cfg.CheckRealEmail {
-			isVulnerable, err := checkRealEmail(ctx, ip, port, cfg)
-			if err != nil {
-				log.Printf("Error checking real email for %s:%d: %v", ip, port, err)
-				continue
-			}
-			if isVulnerable {
-				return true, nil
-			}
-		} else {
-			isVulnerable, err := checkRelayVulnerability(ctx, ip, port, cfg)
-			if err != nil {
-				log.Printf("Error checking relay vulnerability for %s:%d: %v", ip, port, err)
-				continue
-			}
-			if isVulnerable {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func checkPort(ctx context.Context, ip net.IP, port int, cfg *config.Config) (bool, error) {
+func IsVulnerable(ctx context.Context, ip net.IP, port int, cfg *config.Config) (bool, error) {
 	addr := fmt.Sprintf("%s:%d", ip, port)
 	var conn net.Conn
 	var err error
 
-	for retry := 0; retry < maxRetries; retry++ {
-		if cfg.UseTor {
-			conn, err = dialThroughTor(ctx, addr, cfg.Timeout)
-			if err != nil && cfg.FallbackToDirect {
-				conn, err = dialDirect(ctx, addr, cfg.Timeout)
-			}
-		} else {
-			conn, err = dialDirect(ctx, addr, cfg.Timeout)
-		}
-
-		if err == nil && conn != nil {
-			conn.Close()
-			return true, nil
-		}
-
-		time.Sleep(time.Duration(retry+1) * time.Second)
+	if cfg.UseTor {
+		conn, err = dialThroughTor(ctx, addr, cfg.Timeout)
+	} else {
+		conn, err = dialDirect(ctx, addr, cfg.Timeout)
 	}
 
-	return false, nil
+	if err != nil {
+		return false, fmt.Errorf("failed to connect: %w", err)
+	}
+	defer conn.Close()
+
+	// Capture the server's greeting
+	greeting, err := getServerGreeting(conn)
+	if err != nil {
+		log.Printf("Failed to get server greeting from %s: %v", addr, err)
+	} else {
+		log.Printf("Server greeting from %s: %s", addr, greeting)
+	}
+
+	var c *smtp.Client
+
+	switch port {
+	case 465:
+		tlsConn := tls.Client(conn, insecureTLSConfig)
+		c, err = smtp.NewClient(tlsConn, addr)
+	case 587:
+		c, err = smtp.NewClient(conn, addr)
+		if err == nil {
+			err = c.StartTLS(insecureTLSConfig)
+		}
+	default:
+		c, err = smtp.NewClient(conn, addr)
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("failed to create SMTP client: %w", err)
+	}
+	defer c.Close()
+
+	err = c.Hello("localhost")
+	if err != nil {
+		return false, fmt.Errorf("HELO failed: %w", err)
+	}
+
+	err = c.Mail("test@example.com")
+	if err != nil {
+		return false, fmt.Errorf("MAIL FROM failed: %w", err)
+	}
+
+	err = c.Rcpt("test@example.org")
+	if err != nil {
+		return false, nil // Not vulnerable if this fails
+	}
+
+	return true, nil // Potentially vulnerable if all commands succeed
+}
+
+func getServerGreeting(conn net.Conn) (string, error) {
+	reader := bufio.NewReader(conn)
+	greeting, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(greeting), nil
 }
 
 func checkRealEmail(ctx context.Context, ip net.IP, port int, cfg *config.Config) (bool, error) {
@@ -298,60 +310,6 @@ func deleteEmail(ctx context.Context, randomID string, cfg *config.Config) error
 	}
 
 	return nil
-}
-
-func checkRelayVulnerability(ctx context.Context, ip net.IP, port int, cfg *config.Config) (bool, error) {
-	addr := fmt.Sprintf("%s:%d", ip, port)
-	var conn net.Conn
-	var err error
-
-	if cfg.UseTor {
-		conn, err = dialThroughTor(ctx, addr, cfg.Timeout)
-	} else {
-		conn, err = dialDirect(ctx, addr, cfg.Timeout)
-	}
-
-	if err != nil {
-		return false, fmt.Errorf("failed to connect: %w", err)
-	}
-	defer conn.Close()
-
-	var c *smtp.Client
-
-	switch port {
-	case 465:
-		tlsConn := tls.Client(conn, insecureTLSConfig)
-		c, err = smtp.NewClient(tlsConn, addr)
-	case 587:
-		c, err = smtp.NewClient(conn, addr)
-		if err == nil {
-			err = c.StartTLS(insecureTLSConfig)
-		}
-	default:
-		c, err = smtp.NewClient(conn, addr)
-	}
-
-	if err != nil {
-		return false, fmt.Errorf("failed to create SMTP client: %w", err)
-	}
-	defer c.Close()
-
-	err = c.Hello("localhost")
-	if err != nil {
-		return false, fmt.Errorf("HELO failed: %w", err)
-	}
-
-	err = c.Mail("test@example.com")
-	if err != nil {
-		return false, fmt.Errorf("MAIL FROM failed: %w", err)
-	}
-
-	err = c.Rcpt("test@example.org")
-	if err != nil {
-		return false, nil // Not vulnerable if this fails
-	}
-
-	return true, nil // Potentially vulnerable if all commands succeed
 }
 
 func dialThroughTor(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {

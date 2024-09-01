@@ -81,38 +81,41 @@ func scanIP(ctx context.Context, ip net.IP, cfg *config.Config, vulnerableServer
 		log.Printf("Scanning IP: %s", ip)
 	}
 
-	var isOpen bool
-	var err error
+	for _, port := range cfg.Ports {
+		var isOpen bool
+		var err error
 
-	if useRawSockets && !cfg.UseTor {
-		isOpen, err = portIsOpenRaw(ctx, ip, 25, cfg.Timeout)
-	} else {
-		isOpen, err = portIsOpenTCP(ctx, ip.String(), 25, cfg.Timeout, cfg.UseTor)
-	}
-
-	if err != nil {
-		return fmt.Errorf("error checking port: %w", err)
-	}
-
-	if cfg.Debug {
-		log.Printf("Port 25 open on %s: %v", ip, isOpen)
-	}
-
-	if isOpen {
-		isVulnerable, err := openrelay.IsVulnerable(ctx, ip, cfg)
-		if err != nil {
-			log.Printf("Error checking open relay for %s: %v", ip, err)
-			return nil // Continue with next IP instead of returning error
+		if useRawSockets && !cfg.UseTor {
+			isOpen, err = portIsOpenRaw(ctx, ip, port, cfg.Timeout)
+		} else {
+			isOpen, err = portIsOpenTCP(ctx, ip.String(), port, cfg.Timeout, cfg.UseTor)
 		}
 
-		if isVulnerable {
-			result := fmt.Sprintf("[+] %s is vulnerable to open relay attack", ip)
-			vulnerableServers <- result
-			if cfg.Debug {
-				log.Println(result)
+		if err != nil {
+			log.Printf("Error checking port %d on %s: %v", port, ip, err)
+			continue
+		}
+
+		if cfg.Debug {
+			log.Printf("Port %d open on %s: %v", port, ip, isOpen)
+		}
+
+		if isOpen {
+			isVulnerable, err := openrelay.IsVulnerable(ctx, ip, port, cfg)
+			if err != nil {
+				log.Printf("Error checking open relay for %s:%d: %v", ip, port, err)
+				continue
 			}
-		} else if cfg.Debug {
-			log.Printf("[-] %s is not vulnerable to open relay attack", ip)
+
+			if isVulnerable {
+				result := fmt.Sprintf("[+] %s:%d is vulnerable to open relay attack", ip, port)
+				vulnerableServers <- result
+				if cfg.Debug {
+					log.Println(result)
+				}
+			} else if cfg.Debug {
+				log.Printf("[-] %s:%d is not vulnerable to open relay attack", ip, port)
+			}
 		}
 	}
 
