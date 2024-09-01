@@ -8,6 +8,7 @@ type Config struct {
 	CountryCode      string
 	Concurrency      int
 	Timeout          time.Duration
+	TorTimeout       time.Duration
 	UserAgent        string
 	Debug            bool
 	UseTor           bool
@@ -23,6 +24,7 @@ func DefaultConfig() *Config {
 		CountryCode:      "RU",
 		Concurrency:      100,
 		Timeout:          15 * time.Second,
+		TorTimeout:       30 * time.Second,
 		UserAgent:        "ORFinder/1.0 (Security Research; root@schniggie.de)",
 		Debug:            false,
 		UseTor:           false,

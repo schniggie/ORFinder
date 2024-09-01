@@ -16,6 +16,7 @@ import (
 	"github.com/schniggie/orfinder/internal/config"
 	"github.com/schniggie/orfinder/internal/loader"
 	"github.com/schniggie/orfinder/internal/scanner"
+	"github.com/schniggie/orfinder/pkg/utils"
 )
 
 func main() {
@@ -55,6 +56,13 @@ func main() {
 
 	// Print welcome message
 	welcome()
+
+	if cfg.UseTor {
+		if err := utils.VerifyTorConnection(); err != nil {
+			log.Fatalf("Failed to connect to Tor: %v", err)
+		}
+		log.Println("Tor connection verified")
+	}
 
 	// Create a context that we can cancel
 	ctx, cancel := context.WithCancel(context.Background())

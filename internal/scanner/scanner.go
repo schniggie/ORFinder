@@ -108,10 +108,25 @@ func scanIP(ctx context.Context, ip net.IP, cfg *config.Config, vulnerableServer
 			}
 
 			if isVulnerable {
-				result := fmt.Sprintf("[+] %s:%d is vulnerable to open relay attack", ip, port)
-				vulnerableServers <- result
-				if cfg.Debug {
-					log.Println(result)
+				if cfg.CheckRealEmail {
+					emailSent, err := openrelay.CheckRealEmail(ctx, ip, port, cfg)
+					if err != nil {
+						log.Printf("Error performing real email check for %s:%d: %v", ip, port, err)
+					} else if emailSent {
+						result := fmt.Sprintf("[+] %s:%d is confirmed vulnerable to open relay attack (email sent)", ip, port)
+						vulnerableServers <- result
+						if cfg.Debug {
+							log.Println(result)
+						}
+					} else {
+						log.Printf("[-] %s:%d failed real email check", ip, port)
+					}
+				} else {
+					result := fmt.Sprintf("[+] %s:%d is potentially vulnerable to open relay attack", ip, port)
+					vulnerableServers <- result
+					if cfg.Debug {
+						log.Println(result)
+					}
 				}
 			} else if cfg.Debug {
 				log.Printf("[-] %s:%d is not vulnerable to open relay attack", ip, port)
